@@ -14,15 +14,14 @@ from retrieval.vectordb import VectorDB
 from llm.llm import LLM
 from observability.langfuse_client import get_langfuse
 from observability.langfuse_obs import LangfuseTraceBody
+import uuid
+from langfuse import Langfuse
+from langfuse.client import StatefulTraceClient
 import tempfile
 import torch
 import clip
 
 app = FastAPI()
-
-@app.on_event("startup")
-def startup_event():
-    print("[DEBUG] LANGFUSE_HOST in startup event:", os.getenv("LANGFUSE_HOST"))
 
 class DummyBody:
     def __init__(self, input):
@@ -62,6 +61,58 @@ async def chat(query: str = Form(...), pdf: UploadFile = File(...)):
     text_chunks, table_chunks, image_chunks = ingestor.extract_text_tables_images()
     text_embedder = TextTableEmbedder()
     image_embedder = ImageEmbedder()
+
+    # Embed and index
+    all_texts = [chunk['content'] for chunk in text_chunks]
+    text_embs = text_embedder.embed(all_texts) if all_texts else []
+    meta = text_chunks
+    vectordb = VectorDB(text_embs.shape[1] if len(text_embs) > 0 else 384)
+    if len(text_embs) > 0:
+        vectordb.add(text_embs, meta)
+
+    # Add tables
+    if table_chunks:
+        table_texts = [str(chunk['content']) for chunk in table_chunks]
+        table_embs = text_embedder.embed(table_texts)
+        vectordb.add(table_embs, table_chunks)
+
+    # Create separate index for images
+    image_db = None
+    if image_chunks:
+        img_emb_dim = 512  # CLIP ViT-B/32 default
+        image_db = VectorDB(img_emb_dim)
+        for chunk in image_chunks:
+            img_emb = image_embedder.embed(chunk['path'])
+            image_db.add([img_emb], [chunk])
+
+    llm = LLM()
+
+    # Embed query
+    query_emb = text_embedder.embed([query])[0]
+    # Retrieve from text/table index
+    retrieved = vectordb.search(query_emb, top_k=5)
+
+    # Retrieve from image index using CLIP text embedding
+    image_retrieved = []
+    if image_db:
+        text_tokens = clip.tokenize([query]).to(image_embedder.device)
+        with torch.no_grad():
+            clip_query_emb = image_embedder.model.encode_text(text_tokens).cpu().numpy().flatten()
+        image_retrieved = image_db.search(clip_query_emb, top_k=2)
+
+    # Build context and prompt
+    context = "\n".join([str(c['content']) for c in retrieved])
+    prompt = f"Answer the following using context:\n{context}\nQuestion: {query}"
+
+    # Instrument LLM call with Langfuse event logging using a dict body (SDK expects an object with 'id')
+    import uuid
+    from pydantic import BaseModel
+    class EventBody(BaseModel):
+        id: str
+        name: str
+    event_body = EventBody(id=str(uuid.uuid4()), name="llm-generation")
+    trace.event(event_body)
+    response = llm.generate(prompt)
 
     # Embed and index
     all_texts = [chunk['content'] for chunk in text_chunks]
