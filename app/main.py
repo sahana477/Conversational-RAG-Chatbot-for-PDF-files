@@ -1,23 +1,57 @@
+
+import os
+from dotenv import load_dotenv
+load_dotenv(dotenv_path="C:/Users/sahan/OneDrive - Singapore University of Technology and Design/Desktop/NCS-chatbot/.env", override=True)
+print("[DEBUG] LANGFUSE_HOST after load_dotenv:", os.getenv("LANGFUSE_HOST"))
+print("[DEBUG] LANGFUSE_SECRET_KEY after load_dotenv:", os.getenv("LANGFUSE_SECRET_KEY"))
+print("[DEBUG] LANGFUSE_PUBLIC_KEY after load_dotenv:", os.getenv("LANGFUSE_PUBLIC_KEY"))
+
 from fastapi import FastAPI, UploadFile, File, Form
 from pydantic import BaseModel
 from ingest.pdf_ingest import PDFIngestor
 from embeddings.embed import TextTableEmbedder, ImageEmbedder
 from retrieval.vectordb import VectorDB
 from llm.llm import LLM
-from observability.langfuse_obs import Observability
-import os
+from observability.langfuse_client import get_langfuse
+from observability.langfuse_obs import LangfuseTraceBody
 import tempfile
-from dotenv import load_dotenv
 import torch
-load_dotenv()
+import clip
 
 app = FastAPI()
+
+@app.on_event("startup")
+def startup_event():
+    print("[DEBUG] LANGFUSE_HOST in startup event:", os.getenv("LANGFUSE_HOST"))
+
+class DummyBody:
+    def __init__(self, input):
+        self.input = input
+        self.id = None
+app = FastAPI()
+
+@app.on_event("startup")
+def startup_event():
+    load_dotenv(override=True)
+    print("[DEBUG] LANGFUSE_HOST in startup event:", os.getenv("LANGFUSE_HOST"))
 
 class QueryRequest(BaseModel):
     query: str
 
+
 @app.post("/chat")
 async def chat(query: str = Form(...), pdf: UploadFile = File(...)):
+    print("[DEBUG] LANGFUSE_HOST in /chat:", os.getenv("LANGFUSE_HOST"))
+    lf = get_langfuse()
+    body = LangfuseTraceBody(
+        query=query,
+        retrieved_chunks=[],
+        prompt="",
+        response=""
+    )
+    trace = lf.trace(body)
+    print("Trace type:", type(trace))
+
     # Save uploaded PDF to a temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(await pdf.read())
@@ -62,7 +96,6 @@ async def chat(query: str = Form(...), pdf: UploadFile = File(...)):
     # Retrieve from image index using CLIP text embedding
     image_retrieved = []
     if image_db:
-        import clip
         text_tokens = clip.tokenize([query]).to(image_embedder.device)
         with torch.no_grad():
             clip_query_emb = image_embedder.model.encode_text(text_tokens).cpu().numpy().flatten()
@@ -73,7 +106,11 @@ async def chat(query: str = Form(...), pdf: UploadFile = File(...)):
     prompt = f"Answer the following using context:\n{context}\nQuestion: {query}"
     response = llm.generate(prompt)
 
+    # Observability: trace with Langfuse
+    lf.flush()
+
     # Clean up temp file
     os.remove(tmp_path)
 
-    return {"answer": response, "retrieved": retrieved + image_retrieved}
+    return {"answer": response, "retrieved": retrieved + image_retrieved, "trace_type": str(type(trace))}
+
