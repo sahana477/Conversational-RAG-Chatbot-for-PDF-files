@@ -1,0 +1,8 @@
+hf_models/
+data/
+__pycache__/
+.env
+*.pyc
+*.pkl
+*.log
+*.sqlite3
