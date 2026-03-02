@@ -54,7 +54,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Sidebar ---
-st.sidebar.image("https://raw.githubusercontent.com/streamlit/brand-assets/main/streamlit-logo-primary-colormark-darktext.png", use_column_width=True, output_format="PNG", caption="PDF RAG Chatbot", channels="sidebar-logo")
+st.sidebar.image("https://raw.githubusercontent.com/streamlit/brand-assets/main/streamlit-logo-primary-colormark-darktext.png", width='stretch', output_format="PNG", caption="PDF RAG Chatbot", channels="sidebar-logo")
 st.sidebar.title("PDF RAG Chatbot")
 st.sidebar.markdown("""
 **Instructions:**
@@ -82,7 +82,7 @@ def show_chunks(chunks):
     for i, chunk in enumerate(chunks):
         st.markdown(f'<div class="chunk-title">Chunk {i+1} ({chunk["type"]}, page {chunk.get("page","?")}):</div>', unsafe_allow_html=True)
         if chunk['type'] == 'image':
-            st.image(chunk['path'], caption=f"Page {chunk.get('page','?')}", use_column_width=True)
+            st.image(chunk['path'], caption=f"Page {chunk.get('page','?')}", width='stretch')
         elif chunk['type'] == 'table':
             st.table(chunk['content'])
         else:
