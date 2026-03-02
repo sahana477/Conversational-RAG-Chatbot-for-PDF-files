@@ -1,12 +1,14 @@
 import os
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 from langfuse import Langfuse
 import uuid
 
 class LangfuseTraceBody:
-    def __init__(self, query, retrieved_chunks, prompt, response, id=None):
+    def __init__(self, input, output, query=None, retrieved_chunks=None, prompt=None, response=None, id=None):
         self.id = id or str(uuid.uuid4())
+        self.input = input
+        self.output = output
         self.query = query
         self.retrieved_chunks = retrieved_chunks
         self.prompt = prompt
@@ -15,6 +17,8 @@ class LangfuseTraceBody:
     def copy(self, update=None):
         update = update or {}
         return LangfuseTraceBody(
+            input=update.get("input", self.input),
+            output=update.get("output", self.output),
             query=update.get("query", self.query),
             retrieved_chunks=update.get("retrieved_chunks", self.retrieved_chunks),
             prompt=update.get("prompt", self.prompt),
@@ -25,6 +29,8 @@ class LangfuseTraceBody:
     def dict(self):
         return {
             "id": self.id,
+            "input": self.input,
+            "output": self.output,
             "query": self.query,
             "retrieved_chunks": self.retrieved_chunks,
             "prompt": self.prompt,

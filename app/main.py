@@ -41,15 +41,7 @@ class QueryRequest(BaseModel):
 @app.post("/chat")
 async def chat(query: str = Form(...), pdf: UploadFile = File(...)):
     print("[DEBUG] LANGFUSE_HOST in /chat:", os.getenv("LANGFUSE_HOST"))
-    lf = get_langfuse()
-    body = LangfuseTraceBody(
-        query=query,
-        retrieved_chunks=[],
-        prompt="",
-        response=""
-    )
-    trace = lf.trace(body)
-    print("Trace type:", type(trace))
+    # ...existing code...
 
     # Save uploaded PDF to a temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -104,15 +96,21 @@ async def chat(query: str = Form(...), pdf: UploadFile = File(...)):
     context = "\n".join([str(c['content']) for c in retrieved])
     prompt = f"Answer the following using context:\n{context}\nQuestion: {query}"
 
-    # Instrument LLM call with Langfuse event logging using a dict body (SDK expects an object with 'id')
-    import uuid
-    from pydantic import BaseModel
-    class EventBody(BaseModel):
-        id: str
-        name: str
-    event_body = EventBody(id=str(uuid.uuid4()), name="llm-generation")
-    trace.event(event_body)
     response = llm.generate(prompt)
+
+    # Now create the Langfuse trace with both prompt and response
+    lf = get_langfuse()
+    # Explicitly set input/output fields as dicts for Langfuse trace
+    body = LangfuseTraceBody(
+        input={"user_question": query},
+        output={"answer": response},
+        query=query,
+        retrieved_chunks=[],
+        prompt=prompt,
+        response=response
+    )
+    trace = lf.trace(body)
+    print("Trace type:", type(trace))
 
     # Embed and index
     all_texts = [chunk['content'] for chunk in text_chunks]
