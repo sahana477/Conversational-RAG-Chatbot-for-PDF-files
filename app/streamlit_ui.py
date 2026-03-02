@@ -1,118 +1,149 @@
 import streamlit as st
 import requests
-import json
 
-# --- Custom CSS for aesthetics ---
+st.set_page_config(page_title="PDF RAG Chatbot", layout="wide")
+
+# ---------- Custom ChatGPT-like CSS ----------
 st.markdown("""
-    <style>
-    .main-title {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #2a4d69;
-        margin-bottom: 0.5em;
-        text-align: center;
-    }
-    .subtitle {
-        font-size: 1.2rem;
-        color: #4b86b4;
-        text-align: center;
-        margin-bottom: 2em;
-    }
-    .stButton > button {
-        background-color: #4b86b4;
-        color: white;
-        font-weight: 600;
-        border-radius: 8px;
-        padding: 0.5em 2em;
-        margin-top: 1em;
-    }
-    .stTextInput > div > input {
-        border-radius: 8px;
-        border: 1px solid #4b86b4;
-        padding: 0.5em;
-    }
-    .chunk-title {
-        color: #2a4d69;
-        font-weight: 600;
-        margin-top: 1em;
-    }
-    .answer-box {
-        background: #f1f6fa;
-        border-radius: 8px;
-        padding: 1em;
-        margin-bottom: 1em;
-        border: 1px solid #dbe9f4;
-    }
-    .sidebar-logo {
-        display: block;
-        margin-left: auto;
-        margin-right: auto;
-        width: 80%;
-        margin-bottom: 1em;
-    }
-    </style>
+<style>
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 1rem;
+    max-width: 900px;
+}
+
+.chat-container {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.stChatMessage {
+    border-radius: 12px;
+    padding: 0.8rem 1rem;
+}
+
+.answer-box {
+    background: #f7f7f8;
+    padding: 1rem;
+    border-radius: 10px;
+    margin-top: 0.5rem;
+}
+
+.chunk-box {
+    background: #ffffff;
+    border: 1px solid #e5e5e5;
+    padding: 0.7rem;
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+}
+</style>
 """, unsafe_allow_html=True)
 
-# --- Sidebar ---
-st.sidebar.image("https://raw.githubusercontent.com/streamlit/brand-assets/main/streamlit-logo-primary-colormark-darktext.png", width='stretch', output_format="PNG", caption="PDF RAG Chatbot", channels="sidebar-logo")
-st.sidebar.title("PDF RAG Chatbot")
-st.sidebar.markdown("""
-**Instructions:**
-- Enter a question about your PDF (text, tables, images)
-- The chatbot will retrieve relevant chunks and generate an answer
-- You can view retrieved chunks and images
-""")
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Backend:** [FastAPI](https://fastapi.tiangolo.com/) | [Langfuse](https://langfuse.com/) | [FAISS](https://github.com/facebookresearch/faiss)")
+# ---------- Sidebar ----------
+with st.sidebar:
+    st.title("📄 PDF RAG Chatbot")
+    uploaded_pdf = st.file_uploader("Upload your PDF", type=["pdf"])
+    
+    if uploaded_pdf:
+        st.session_state["pdf_file"] = uploaded_pdf
+    elif "pdf_file" not in st.session_state:
+        st.session_state["pdf_file"] = None
 
-# --- Main UI ---
-st.markdown('<div class="main-title">PDF RAG Chatbot Demo</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Ask questions about your PDF and get answers with context, tables, and images.</div>', unsafe_allow_html=True)
+    if st.button("🆕 New Chat"):
+        st.session_state.messages = []
 
-if "history" not in st.session_state:
-    st.session_state["history"] = []
+    st.markdown("---")
+    st.markdown("**Backend Stack:**")
+    st.markdown("- FastAPI")
+    st.markdown("- FAISS")
+    st.markdown("- Langfuse")
 
-with st.form("chat_form"):
-    query = st.text_input("Enter your question:", key="query_input")
-    uploaded_pdf = st.file_uploader("Upload a PDF", type=["pdf"], key="pdf_upload")
-    submitted = st.form_submit_button("Ask")
 
-def show_chunks(chunks):
-    for i, chunk in enumerate(chunks):
-        st.markdown(f'<div class="chunk-title">Chunk {i+1} ({chunk["type"]}, page {chunk.get("page","?")}):</div>', unsafe_allow_html=True)
-        if chunk['type'] == 'image':
-            st.image(chunk['path'], caption=f"Page {chunk.get('page','?')}", width='stretch')
-        elif chunk['type'] == 'table':
-            st.table(chunk['content'])
+# ---------- Session State ----------
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+
+# ---------- Display Chat History ----------
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        if message["role"] == "assistant":
+            st.markdown(f'<div class="answer-box">{message["content"]}</div>', unsafe_allow_html=True)
         else:
-            st.code(str(chunk['content']))
+            st.markdown(message["content"])
 
-if submitted and query and uploaded_pdf:
+        # Show retrieved chunks if assistant message
+        if message["role"] == "assistant" and "retrieved" in message:
+            with st.expander("📚 Retrieved Chunks"):
+                for i, chunk in enumerate(message["retrieved"]):
+                    st.markdown(f"**Chunk {i+1} ({chunk['type']}, page {chunk.get('page','?')})**")
+
+                    if chunk["type"] == "image":
+                        st.image(chunk["path"], use_container_width=True)
+                    elif chunk["type"] == "table":
+                        st.table(chunk["content"])
+                    else:
+                        st.code(str(chunk["content"]))
+
+
+# ---------- Chat Input (directly below history) ----------
+pdf_file = st.session_state.get("pdf_file")
+prompt = st.chat_input("Ask something about your PDF...")
+if prompt:
+
+    if not pdf_file:
+        st.warning("Please upload a PDF first.")
+        st.stop()
+
+    # Add user message
+    st.session_state.messages.append({
+        "role": "user",
+        "content": prompt
+    })
+
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Call backend
     url = "http://localhost:8000/chat"
-    files = {"pdf": (uploaded_pdf.name, uploaded_pdf, "application/pdf")}
-    data = {"query": query}
-    with st.spinner("Retrieving answer..."):
-        try:
-            response = requests.post(url, data=data, files=files, timeout=180)
-            if response.status_code == 200:
-                data = response.json()
-                answer = data.get("answer", "No answer returned.")
-                retrieved = data.get("retrieved", [])
-                st.session_state["history"].append({"query": query, "answer": answer, "retrieved": retrieved})
-            else:
-                st.error(f"Error: {response.status_code} {response.text}")
-        except Exception as e:
-            st.error(f"Request failed: {e}")
-elif submitted and not uploaded_pdf:
-    st.warning("Please upload a PDF file to ask questions.")
+    files = {"pdf": (pdf_file.name, pdf_file, "application/pdf")}
+    data = {"query": prompt}
 
-# --- Conversation History ---
-if st.session_state["history"]:
-    st.markdown("<hr>", unsafe_allow_html=True)
-    st.markdown("## Conversation History")
-    for idx, entry in enumerate(reversed(st.session_state["history"])):
-        with st.expander(f"Q{len(st.session_state['history'])-idx}: {entry['query']}", expanded=(idx==0)):
-            st.markdown(f'<div class="answer-box"><b>Answer:</b> {entry["answer"]}</div>', unsafe_allow_html=True)
-            st.markdown("**Retrieved Chunks:**")
-            show_chunks(entry['retrieved'])
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                response = requests.post(url, data=data, files=files, timeout=180)
+
+                if response.status_code == 200:
+                    res_data = response.json()
+                    answer = res_data.get("answer", "No answer returned.")
+                    retrieved = res_data.get("retrieved", [])
+
+                    st.markdown(f'<div class="answer-box">{answer}</div>', unsafe_allow_html=True)
+
+                    # Store assistant message
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": answer,
+                        "retrieved": retrieved
+                    })
+
+                    # Show retrieved chunks
+                    if retrieved:
+                        with st.expander("📚 Retrieved Chunks"):
+                            for i, chunk in enumerate(retrieved):
+                                st.markdown(f"**Chunk {i+1} ({chunk['type']}, page {chunk.get('page','?')})**")
+
+                                if chunk["type"] == "image":
+                                    st.image(chunk["path"], use_container_width=True)
+                                elif chunk["type"] == "table":
+                                    st.table(chunk["content"])
+                                else:
+                                    st.code(str(chunk["content"]))
+
+                else:
+                    st.error(f"Error: {response.status_code} {response.text}")
+
+            except Exception as e:
+                st.error(f"Request failed: {e}")
